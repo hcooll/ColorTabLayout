@@ -55,7 +55,9 @@ import android.support.v7.widget.TooltipCompat;
 import android.text.Layout;
 import android.text.TextUtils;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.util.TypedValue;
+import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -147,7 +149,7 @@ import java.util.Iterator;
  * @see <a href="http://www.google.com/design/spec/components/tabs.html">Tabs</a>
  */
 @ViewPager.DecorView
-public class CTabLayout extends HorizontalScrollView {
+public class CTabLayout extends FrameLayout {
 
     private static final int DEFAULT_HEIGHT_WITH_TEXT_ICON = 72; // dps
     static final int DEFAULT_GAP_TEXT_ICON = 8; // dps
@@ -305,8 +307,8 @@ public class CTabLayout extends HorizontalScrollView {
 
         // Add the TabStrip
         mTabStrip = new SlidingTabStrip(context);
-        super.addView(mTabStrip, 0, new HorizontalScrollView.LayoutParams(
-                LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT));
+        super.addView(mTabStrip, 0, new ViewGroup.LayoutParams(
+                LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
         TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.TabLayout,
                 defStyleAttr, R.style.Widget_Design_TabLayout);
@@ -375,9 +377,6 @@ public class CTabLayout extends HorizontalScrollView {
 
     @Override
     protected void onLayout(boolean changed, int l, int t, int r, int b) {
-        if (getChildCount() > 0) {
-            getChildAt(0).setPadding(r - l / 2, 0, r - l / 2, 0);
-        }
         super.onLayout(changed, l, t, r, b);
     }
 
@@ -444,7 +443,7 @@ public class CTabLayout extends HorizontalScrollView {
             mScrollAnimator.cancel();
         }
 
-        scrollTo(calculateScrollXForTab(position, positionOffset), 0);
+        //scrollTo(calculateScrollXForTab(position, positionOffset), 0);
 
         // Update the 'selected state' view as we scroll, if enabled
         if (updateSelectedText) {
@@ -1229,10 +1228,10 @@ public class CTabLayout extends HorizontalScrollView {
 
         switch (mMode) {
             case MODE_FIXED:
-                mTabStrip.setGravity(Gravity.CENTER_HORIZONTAL);
+                //mTabStrip.setGravity(Gravity.CENTER_HORIZONTAL);
                 break;
             case MODE_SCROLLABLE:
-                mTabStrip.setGravity(GravityCompat.START);
+                //mTabStrip.setGravity(GravityCompat.START);
                 break;
         }
 
@@ -1801,7 +1800,10 @@ public class CTabLayout extends HorizontalScrollView {
         }
     }
 
-    private class SlidingTabStrip extends LinearLayout {
+    private class SlidingTabStrip extends ViewGroup {
+
+        public static final String TAG = "SlidingTabStrip";
+
         private int mSelectedIndicatorHeight;
         private final Paint mSelectedIndicatorPaint;
 
@@ -1815,9 +1817,37 @@ public class CTabLayout extends HorizontalScrollView {
 
         private ValueAnimator mIndicatorAnimator;
 
+        private int mWidth;
+        private int mHeight;
+        private int mChildWidth;
+        private int mChildHeight;
+        private int mChildCount;
+
+        /**
+         * 动画实际上就是围绕着椭圆的轨迹来旋转的。
+         */
+        private int mOvalWidthMargin;   //椭圆的宽距离父容器两边的宽度
+        private int mOvalHeightMargin;  //椭圆的高距离父容器两边的长度
+        private int mOvalWidth;         //椭圆的宽度
+        private int mOvalHeight;        //椭圆的高度
+        private View[] mChildrenView;   //所有的子view
+        private double[] mAngles;       //所有view角度的集合
+
+        private boolean flag = true;    //是否初始化过子view
+        private boolean animate = false;    //是否正在动画
+        private boolean clockwise = true;   //是否顺时针旋转
+
+        private float animateTime = 5000;   //默认的动画持续时间
+        private float currentTime = 0;      //当前动画执行的时间
+        private GestureDetector mGesture;
+
+        private My3dInterpolate interpolate;//自定义的插值器
+        private OnItemClickListener itemClickListener;//自定义的子view的点击监听器
+
         SlidingTabStrip(Context context) {
             super(context);
             setWillNotDraw(false);
+            setPersistentDrawingCache(PERSISTENT_NO_CACHE);
             mSelectedIndicatorPaint = new Paint();
         }
 
@@ -1929,11 +1959,81 @@ public class CTabLayout extends HorizontalScrollView {
                     super.onMeasure(widthMeasureSpec, heightMeasureSpec);
                 }
             }
+            mWidth = MeasureSpec.getSize(widthMeasureSpec);
+            mHeight = MeasureSpec.getSize(heightMeasureSpec);
+
+            Log.e(TAG,"onMeasure mWidth:"+mWidth+", mHeight:"+mHeight);
         }
 
         @Override
         protected void onLayout(boolean changed, int l, int t, int r, int b) {
-            super.onLayout(changed, l, t, r, b);
+            //super.onLayout(changed, l, t, r, b);
+
+            if (flag) {
+                //进行一些初始化的操作
+/*            if ((mOvalHeight == -1) || (mOvalWidth == -1)) {
+                if (mWidth > mHeight) {
+                    mOvalHeight = (mHeight - 100) / 2;
+                    mOvalWidth = mOvalHeight + 100;
+                } else {
+                    mOvalWidth = (mWidth - 100) / 2;
+                    mOvalHeight = mOvalWidth + 100;
+                }
+            }else {
+                mOvalWidth /= 2;
+                mOvalHeight /= 2;
+            }*/
+
+                if (mOvalHeightMargin != -1) {
+                    mOvalHeight = (mHeight - mOvalHeightMargin * 2) / 2;
+                } else if (mOvalHeight == -1) {
+                    mOvalHeight = mHeight / 2;
+                }
+                if (mOvalWidthMargin != -1) {
+                    mOvalWidth = (mWidth - mOvalWidthMargin * 2) / 2;
+                } else if (mOvalWidth == -1) {
+                    mOvalWidth = mWidth / 2;
+                }
+
+
+                if ((mChildWidth == -1) && (mChildHeight == -1)) {
+                    mChildWidth = 50;
+                    mChildHeight = 50;
+                }
+
+                //下面是获取所有的子view，给子view分配初始位置，默认第一个是270度，相当于y轴负半轴。
+                mChildCount = getChildCount();
+                mChildrenView = new View[mChildCount];
+                mAngles = new double[mChildCount];
+                mAngles[0] = 270;
+                double j = 360 / mChildCount;
+                for (int i = 0; i < mChildCount; i++) {
+                    mChildrenView[i] = getChildAt(i);
+                    final int finalI = i;
+                    mChildrenView[i].setOnClickListener(new OnClickListener() {
+                        @Override
+                        public void onClick(View v) {
+                            if (itemClickListener == null)
+                                Log.e(TAG, "你点击了的position = " + finalI + ",但是itemClickListener == null");
+                            else {
+                                itemClickListener.onItemClick(v, finalI, true);
+                            }
+                        }
+                    });
+                    if (i > 0) {
+                        if ((mAngles[i] + j) <= 360) {
+                            mAngles[i] = mAngles[i - 1] + j;
+                        } else {
+                            mAngles[i] = mAngles[i - 1] + j - 360;
+                        }
+                    }
+                    int x = (int) (mOvalWidth * Math.cos(mAngles[i] * Math.PI / 180));
+                    int y = (int) (mOvalHeight * Math.sin(mAngles[i] * Math.PI / 180));
+                    mChildrenView[i].layout(mWidth / 2 - x - mChildWidth / 2, mHeight / 2 - y - mChildHeight / 2, mWidth / 2 - x + mChildWidth / 2, mHeight / 2 - y + mChildHeight / 2);
+                }
+                Log.e(TAG,"onLayout mChildCount:"+mChildCount);
+                flag = false;
+            }
 
             if (mIndicatorAnimator != null && mIndicatorAnimator.isRunning()) {
                 // If we're currently running an animation, lets cancel it and start a
@@ -2053,12 +2153,41 @@ public class CTabLayout extends HorizontalScrollView {
         public void draw(Canvas canvas) {
             super.draw(canvas);
 
+            Log.e(TAG,"draw mIndicatorLeft:"+mIndicatorLeft+", mIndicatorRight:"+mIndicatorRight);
             // Thick colored underline below the current selection
             if (mIndicatorLeft >= 0 && mIndicatorRight > mIndicatorLeft) {
                 canvas.drawRect(mIndicatorLeft, getHeight() - mSelectedIndicatorHeight,
                         mIndicatorRight, getHeight(), mSelectedIndicatorPaint);
             }
+
+            for (int i = 0; i < mChildCount; i++) {
+                int x = (int) (mOvalWidth * Math.cos(mAngles[i] * Math.PI / 180));
+                int y = (int) (mOvalHeight * Math.sin(mAngles[i] * Math.PI / 180));
+                mChildrenView[i].layout(mWidth / 2 - x - mChildWidth / 2, mHeight / 2 - y - mChildHeight / 2, mWidth / 2 - x + mChildWidth / 2, mHeight / 2 - y + mChildHeight / 2);
+            }
         }
+    }
+
+    /**
+     * 自定义的插值器
+     */
+    public interface My3dInterpolate {
+        /**
+         * 自定义的插值器方法,返回下一帧要增加的角度，因为旋转菜单是根据角度来计算位移的。
+         *
+         * @param timing 当前动画的时间占总动画时间的百分比
+         * @return 角度
+         */
+        double getInterpolation(float timing);
+    }
+
+    public interface OnItemClickListener {
+        /**
+         * @param view     点击的view
+         * @param position 点击的position
+         * @param isFirst  是否是最前面的那个view(暂时没有写 <(￣︶￣)> )
+         */
+        void onItemClick(View view, int position, boolean isFirst);
     }
 
     private static ColorStateList createColorStateList(int defaultColor, int selectedColor) {
